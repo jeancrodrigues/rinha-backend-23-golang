@@ -1,7 +1,7 @@
 version: '3.5'
 services:
   api1: &api
-    image: a41f103d2cc9
+    image: 6c463796e9bf
 #    hostname: api1
     depends_on:
       - db
@@ -11,11 +11,16 @@ services:
     deploy:
       resources:
         limits:
-          cpus: '0.15'
-          memory: '0.25GB'
+          cpus: '0.175'
+          memory: '0.5GB'
     environment:
       DATABASE_URL: postgres://pessoa:pessoa@db:5432/pessoa
-      REDIS_URL: cache:6379
+      MAX_CONNECTIONS: 75
+    command:
+      - "app"
+      - "-max_queue_size=3000"
+      - "-batch_size=500"
+      - "-batch_sleep=5000"
 
   api2: *api
 #    # API - Instância 01
@@ -45,21 +50,8 @@ services:
     deploy:
       resources:
         limits:
-          cpus: '0.10'
-          memory: '0.25GB'
-
-  cache:
-    image: redis:7.2-alpine
-    restart: always
-#    ports:
-#      - '6379:6379'
-    deploy:
-      resources:
-        limits:
-          cpus: '0.20'
-          memory: '0.75B'
-    command: redis-server --save "" --loglevel warning
-
+          cpus: '0.15'
+          memory: '0.5GB'
 
   db: # Banco de dados
     image: postgres
@@ -69,7 +61,7 @@ services:
     deploy:
       resources:
         limits:
-          cpus: '0.90'
+          cpus: '1.0'
           memory: '1.5GB'
     ports:
       - "5433:5432"
@@ -80,6 +72,6 @@ services:
     command:
       - "postgres"
       - "-c"
-      - "max_connections=250"
+      - "max_connections=200"
       - "-c"
-      - "shared_buffers=256MB"
+      - "shared_buffers=512MB"

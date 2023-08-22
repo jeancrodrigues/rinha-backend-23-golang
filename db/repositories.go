@@ -43,11 +43,25 @@ func GetPessoaById(conn PgxIface, id uuid.UUID) (*Pessoa, error) {
 	return &pessoa, nil
 }
 
-func FindPessoas(conn PgxIface, search string) ([]Pessoa, error) {
+func CheckPessoaExistsByApelido(conn PgxIface, apelido string) (bool, error) {
+	sql := "select count(*) > 0 from pessoa where apelido = $1"
 
-	sql := `select id, apelido, nome, nascimento, stack 
-		from pessoa w
-		where stack_s ilike '%' || $1 || '%s'
+	var exists bool
+
+	err := conn.QueryRow(context.Background(), sql, apelido).Scan(&exists)
+
+	if err != nil {
+		return false, err
+	}
+
+	return exists, nil
+}
+
+func FindPessoas(conn PgxIface, search string) ([]string, error) {
+
+	sql := `select pessoaJson 
+		from pessoa_search w
+		where search ilike '%' || $1 || '%'
 		limit 50`
 
 	result, err := conn.Query(context.Background(), sql, search)
@@ -57,26 +71,21 @@ func FindPessoas(conn PgxIface, search string) ([]Pessoa, error) {
 		return nil, err
 	}
 
-	pessoas := []Pessoa{}
+	pessoas := []string{}
 
 	for {
 		if !result.Next() {
 			break
 		}
-		var pessoa Pessoa
+		var pessoa []byte
 
-		err := result.Scan(
-			&pessoa.Id,
-			&pessoa.Apelido,
-			&pessoa.Nome,
-			&pessoa.Nascimento,
-			&pessoa.Stack)
+		err := result.Scan(&pessoa)
 
 		if err != nil {
 			continue
 		}
 
-		pessoas = append(pessoas, pessoa)
+		pessoas = append(pessoas, string(pessoa))
 	}
 
 	return pessoas, nil
@@ -90,14 +99,58 @@ func (e *ApelidoError) Error() string {
 	return e.Msg
 }
 
-func SavePessoa(conn PgxIface, id uuid.UUID, pessoa Pessoa) error {
+func SavePessoaSearch(conn PgxIface, pessoa Pessoa, pessoaJson []byte) error {
 
-	sql := `insert into pessoa values ( $1, $2, $3, $4, $5::varchar[], $6);`
+	sql := `insert into pessoa_search values ( $1, $2 );`
 
 	search := strings.ToLower(strings.Join(pessoa.Stack, " ") + " " + pessoa.Nome + " " + pessoa.Apelido)
 
 	exec, err := conn.
-		Exec(context.Background(), sql, id, pessoa.Apelido, pessoa.Nome, pessoa.Nascimento, pessoa.Stack, search)
+		Exec(context.Background(), sql, search, pessoaJson)
+
+	log.Println(fmt.Sprintf("executed insert with result %+v", exec))
+
+	if err != nil {
+		log.Println(fmt.Sprintf("error executing insert %v", err))
+		return err
+	}
+
+	return nil
+}
+
+func SavePessoaSearchBatch(conn PgxIface, pessoaBatch []Pessoa, pessoaJson [][]byte) error {
+
+	sql := "insert into pessoa_search values %s"
+
+	params := []interface{}{}
+	paramSql := []string{}
+
+	for index, pessoa := range pessoaBatch {
+		i := index * 2
+		search := strings.ToLower(strings.Join(pessoa.Stack, " ") + " " + pessoa.Nome + " " + pessoa.Apelido)
+		params = append(params, search, pessoaJson[index])
+		paramSql = append(paramSql, fmt.Sprintf("($%d, $%d)", i+1, i+2))
+	}
+
+	exec, err := conn.
+		Exec(context.Background(), fmt.Sprintf(sql, strings.Join(paramSql, ",")), params...)
+
+	log.Println(fmt.Sprintf("executed insert with result %+v", exec))
+
+	if err != nil {
+		log.Println(fmt.Sprintf("error executing insert %v", err))
+		return err
+	}
+
+	return nil
+}
+
+func SavePessoa(conn PgxIface, id uuid.UUID, pessoa Pessoa) error {
+
+	sql := `insert into pessoa values ( $1, $2, $3, $4, $5::varchar[]);`
+
+	exec, err := conn.
+		Exec(context.Background(), sql, id, pessoa.Apelido, pessoa.Nome, pessoa.Nascimento, pessoa.Stack)
 
 	log.Println(fmt.Sprintf("executed insert with result %+v", exec))
 
@@ -112,7 +165,6 @@ func SavePessoa(conn PgxIface, id uuid.UUID, pessoa Pessoa) error {
 				if pgerr.Code == "23505" && pgerr.ConstraintName == "pessoa_apelido_index" {
 					return &ApelidoError{}
 				}
-
 			}
 		default:
 			return err

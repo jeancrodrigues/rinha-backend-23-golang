@@ -7,6 +7,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"log"
 	"os"
+	"strconv"
 	"time"
 )
 
@@ -37,12 +38,18 @@ func GetConnection() PgxIface {
 	}
 
 	var err error
-	maxConnections := 50
+
+	maxConnectionsS := os.Getenv("MAX_CONNECTIONS")
+	if maxConnectionsS == "" {
+		maxConnectionsS = "50"
+	}
 
 	config, err := pgxpool.ParseConfig(connectionString)
 	if err != nil {
 		log.Fatal(err)
 	}
+
+	maxConnections, _ := strconv.Atoi(maxConnectionsS)
 
 	config.MaxConns = int32(maxConnections)
 	config.MinConns = int32(maxConnections)

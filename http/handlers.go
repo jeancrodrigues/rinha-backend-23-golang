@@ -3,18 +3,17 @@ package handler
 import (
 	"backend/db"
 	"context"
-	"encoding/json"
-	"errors"
 	"fmt"
+	"github.com/dgraph-io/ristretto"
 	"github.com/flier/gohs/hyperscan"
 	"github.com/google/uuid"
+	jsoniter "github.com/json-iterator/go"
 	"github.com/julienschmidt/httprouter"
-	"github.com/redis/go-redis/v9"
 	"io"
 	"log"
 	"net/http"
-	"os"
 	"strconv"
+	"strings"
 )
 
 var (
@@ -22,17 +21,37 @@ var (
 	regexpr, _    = hyperscan.
 			NewBlockDatabase(hyperscan.NewPattern("^\\d{4}\\-(0[1-9]|1[012])\\-(0[1-9]|[12][0-9]|3[01])$", hyperscan.SingleMatch))
 
-	redisConnection = redis.NewClient(&redis.Options{Addr: getRedisString()})
-	ctx             = context.Background()
+	ctx      = context.Background()
+	json     = jsoniter.ConfigCompatibleWithStandardLibrary
+	cache    *ristretto.Cache
+	getCache = GetCache
 )
 
-func getRedisString() string {
-	redisString := os.Getenv("REDIS_URL")
+type Job struct {
+	name       string
+	Pessoa     *db.Pessoa
+	PessoaJson []byte
+}
 
-	if redisString == "" {
-		return "localhost:6379"
+func GetCache() *ristretto.Cache {
+
+	if cache != nil {
+		return cache
 	}
-	return redisString
+
+	var err error
+
+	cache, err = ristretto.NewCache(&ristretto.Config{
+		NumCounters: 1e7,     // number of keys to track frequency of (10M).
+		MaxCost:     1 << 30, // maximum cost of cache (1GB).
+		BufferItems: 64,      // number of keys per Get buffer.
+	})
+
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	return cache
 }
 
 func GetPessoa(w http.ResponseWriter, r *http.Request, ps httprouter.Params) {
@@ -41,18 +60,17 @@ func GetPessoa(w http.ResponseWriter, r *http.Request, ps httprouter.Params) {
 
 	if err != nil {
 		http.NotFound(w, r)
-		log.Println(fmt.Sprintf("get pessoa with invalid uuid %s %s", param, err))
+		log.Println(fmt.Sprintf("get Pessoa with invalid uuid %s %s", param, err))
 		return
 	}
 
-	log.Println(fmt.Sprintf("get pessoa by id %s", id))
+	log.Println(fmt.Sprintf("get Pessoa by id %s", id))
 
-	result, err := redisConnection.Get(ctx, "id::"+id.String()).Result()
+	result, found := getCache().Get("id::" + id.String())
 
-	if err == nil {
+	if found {
 		log.Printf("found in cache %+v\n", result)
-		_, err := w.Write([]byte(result))
-
+		_, err := w.Write([]byte(fmt.Sprintf("%s", result)))
 		if err != nil {
 			log.Println(err)
 			return
@@ -95,8 +113,7 @@ func GetPessoas(w http.ResponseWriter, r *http.Request, ps httprouter.Params) {
 
 	log.Println(fmt.Sprintf("get pessoas by term %s", searchTerm))
 
-	pessoaJson, _ := json.Marshal(pessoas)
-	_, err = w.Write(pessoaJson)
+	_, err = w.Write([]byte(fmt.Sprintf("[%s]", strings.Join(pessoas, ","))))
 
 	if err != nil {
 		log.Println(err)
@@ -105,53 +122,64 @@ func GetPessoas(w http.ResponseWriter, r *http.Request, ps httprouter.Params) {
 	}
 }
 
-func CreatePessoa(w http.ResponseWriter, r *http.Request, ps httprouter.Params) {
-
+func CreatePessoa(jobs chan Job, w http.ResponseWriter, r *http.Request, ps httprouter.Params) {
 	bytes, err := io.ReadAll(r.Body)
-
-	pessoa, err := parsePessoa(bytes)
-
 	if err != nil {
 		w.WriteHeader(http.StatusBadRequest)
-		log.Printf("error parsing input %s\n", err)
+		log.Printf("error reading body %s\n", err)
 		return
 	}
 
-	id, _ := uuid.NewUUID()
-	pessoa.Id = id
+	handleCreatePessoa(jobs, bytes, w, r)
+}
 
-	pessoaJson, _ := json.Marshal(pessoa)
+func getNewUuid(resultChan chan uuid.UUID) {
+	resultChan <- uuid.New()
+}
 
-	err = redisConnection.Set(ctx, "id::"+id.String(), pessoaJson, 0).Err()
-	if err != nil {
-		log.Println(err)
-	}
+func handleCreatePessoa(jobs chan Job, bytes []byte, w http.ResponseWriter, r *http.Request) {
 
-	err = redisConnection.Set(ctx, "apelido::"+pessoa.Apelido, id.String(), 0).Err()
-	if err != nil {
-		log.Println(err)
-	}
+	uuidChannel := make(chan uuid.UUID)
+	go getNewUuid(uuidChannel)
 
-	err = db.SavePessoa(GetConnection(), id, *pessoa)
+	parsePessoaChannel := make(chan ParsePessoaResult)
+	go parsePessoa(bytes, parsePessoaChannel)
 
-	if err != nil {
-
-		var apelidoError *db.ApelidoError
-
-		switch {
-		case errors.As(err, &apelidoError):
-			w.WriteHeader(http.StatusBadRequest)
-		default:
-			w.WriteHeader(http.StatusInternalServerError)
-		}
+	parseResult := <-parsePessoaChannel
+	if parseResult.Error != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		log.Printf("error parsing input %s\n", parseResult.Error)
 		return
 	}
 
-	log.Println(fmt.Sprintf("created pessoa with id %s : body %+v", id, pessoa))
+	pessoa := parseResult.Pessoa
+	pessoa.Id = <-uuidChannel
 
-	w.Header().Set("Location", fmt.Sprintf("/pessoas/%s", id))
+	w.Header().Set("Location", fmt.Sprintf("/pessoas/%s", pessoa.Id))
 	w.WriteHeader(http.StatusCreated)
 
+	go persistPessoa(jobs, pessoa)
+}
+
+func persistPessoa(jobs chan Job, pessoa *db.Pessoa) {
+	pessoaJson, _ := json.Marshal(pessoa)
+
+	getCache().Set("id::"+pessoa.Id.String(), pessoaJson, 1)
+	getCache().Set("apelido::"+pessoa.Apelido, true, 1)
+
+	job := Job{pessoa.Id.String(), pessoa, pessoaJson}
+	go func() {
+		fmt.Printf("added: %s %s\n", job.name)
+		jobs <- job
+	}()
+
+	err := db.SavePessoa(GetConnection(), pessoa.Id, *pessoa)
+	if err != nil {
+		log.Println(err)
+		return
+	}
+
+	log.Println(fmt.Sprintf("created Pessoa with id %s : body %+v", pessoa.Id, pessoa))
 }
 
 func GetPessoaCount(w http.ResponseWriter, r *http.Request, ps httprouter.Params) {
@@ -171,29 +199,102 @@ func GetPessoaCount(w http.ResponseWriter, r *http.Request, ps httprouter.Params
 	}
 }
 
-func parsePessoa(bytes []byte) (*db.Pessoa, error) {
+type ParsePessoaResult struct {
+	Pessoa *db.Pessoa
+	Error  error
+}
+
+func parsePessoaNascimento(nascimento string, result chan bool) {
+	result <- regexpr.MatchString(nascimento)
+}
+
+func checkPessoaExistsCache(apelido string, result chan bool) {
+	_, found := getCache().Get("apelido::" + apelido)
+	result <- found
+}
+
+func checkPessoaExistsDb(apelido string, result chan bool) {
+	exists, _ := db.CheckPessoaExistsByApelido(GetConnection(), apelido)
+	result <- exists
+}
+
+func parsePessoa(bytes []byte, result chan ParsePessoaResult) {
 	var pessoa db.Pessoa
 	err := json.Unmarshal(bytes, &pessoa)
 
 	if err != nil {
-		return nil, err
+		result <- ParsePessoaResult{
+			Pessoa: nil,
+			Error:  err,
+		}
 	}
 
-	result, err := redisConnection.Get(ctx, "apelido::"+pessoa.Apelido).Result()
+	parseNascimentoChannel := make(chan bool)
+	go parsePessoaNascimento(pessoa.Nascimento, parseNascimentoChannel)
 
-	if err == nil {
-		return nil, fmt.Errorf("field apelido duplicated %+v", result)
+	checkApelidoExistsChannel := make(chan bool)
+	go checkPessoaExistsCache(pessoa.Apelido, checkApelidoExistsChannel)
+	existsCache := <-checkApelidoExistsChannel
+	if existsCache {
+		result <- resultParsePessoaError("apelido must be unique")
 	}
+
+	go checkPessoaExistsDb(pessoa.Apelido, checkApelidoExistsChannel)
 
 	if pessoa.Nome == "" || pessoa.Apelido == "" || (pessoa.Stack != nil && len(pessoa.Stack) == 0) {
-		return nil, fmt.Errorf("field cannot be null")
+		result <- resultParsePessoaError("field cannot be null")
 	}
 
-	if !regexpr.MatchString(pessoa.Nascimento) {
-		return nil, fmt.Errorf("field nascimento invalid")
+	nascimentoValido := <-parseNascimentoChannel
+	if !nascimentoValido {
+		result <- resultParsePessoaError("field nascimento invalid")
 	}
 
-	log.Printf(fmt.Sprintf("parsed pessoa %+v", pessoa))
+	existsDb := <-checkApelidoExistsChannel
+	if existsDb {
+		result <- resultParsePessoaError("apelido must be unique")
+	}
 
-	return &pessoa, nil
+	log.Printf(fmt.Sprintf("parsed Pessoa %+v", pessoa))
+
+	result <- resultParsePessoaSuccess(&pessoa)
+}
+
+func resultParsePessoaError(err string) ParsePessoaResult {
+	return ParsePessoaResult{
+		Pessoa: nil,
+		Error:  fmt.Errorf(err),
+	}
+}
+
+func resultParsePessoaSuccess(pessoa *db.Pessoa) ParsePessoaResult {
+	return ParsePessoaResult{
+		Pessoa: pessoa,
+		Error:  nil,
+	}
+}
+
+func MaterializePessoaToSearchTable(id int, j Job) {
+	fmt.Printf("worker%d: started %s\n", id, j.name)
+
+	db.SavePessoaSearch(GetConnection(), *j.Pessoa, j.PessoaJson)
+
+	fmt.Printf("worker%d: completed %s!\n", id, j.name)
+}
+
+func MaterializePessoaToSearchTableBatch(batch []Job) {
+	log.Println(fmt.Printf("batch started %s\n", batch[0].name))
+
+	var pessoaBatch []db.Pessoa
+	var pessoaJson [][]byte
+
+	for _, job := range batch {
+		pessoaBatch = append(pessoaBatch, *job.Pessoa)
+		pessoaJson = append(pessoaJson, job.PessoaJson)
+	}
+
+	db.SavePessoaSearchBatch(GetConnection(), pessoaBatch, pessoaJson)
+
+	log.Println(fmt.Printf("batch completed %s count %d!\n", batch[0].name, len(batch)))
+
 }

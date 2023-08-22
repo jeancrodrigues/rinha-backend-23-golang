@@ -144,7 +144,7 @@ func callCreatePessoa(pessoa string, t *testing.T) (*httptest.ResponseRecorder, 
 		return mock
 	}
 
-	mock.ExpectExec("^insert into pessoa values (.*)").
+	mock.ExpectExec("^insert into Pessoa values (.*)").
 		WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg()).
 		WillReturnResult(pgxmock.NewResult("INSERT", 1))
 

@@ -7,6 +7,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"log"
 	"os"
+	"time"
 )
 
 type PgxIface interface {
@@ -17,32 +18,47 @@ type PgxIface interface {
 }
 
 var (
-	db *pgxpool.Pool
+	Conn *pgxpool.Pool
 )
 
 func GetConnection() PgxIface {
 
-	if db != nil {
-		return db
+	if Conn != nil {
+		log.Println("getting existent connection")
+		return Conn
+	} else {
+		log.Println("opening connections")
 	}
 
 	connectionString := os.Getenv("DATABASE_URL")
 
 	if connectionString == "" {
-		connectionString = "postgres://pessoa:pessoa@localhost:5432/pessoa"
+		connectionString = "postgres://pessoa:pessoa@localhost:5433/pessoa"
 	}
 
 	var err error
+	maxConnections := 50
 
-	db, err = pgxpool.New(context.Background(), connectionString)
+	config, err := pgxpool.ParseConfig(connectionString)
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	err = db.Ping(context.Background())
+	config.MaxConns = int32(maxConnections)
+	config.MinConns = int32(maxConnections)
+
+	config.MaxConnIdleTime = time.Minute * 3
+
+	Conn, err = pgxpool.NewWithConfig(context.Background(), config)
+
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	return db
+	err = Conn.Ping(context.Background())
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	return Conn
 }

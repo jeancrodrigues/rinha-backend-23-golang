@@ -4,14 +4,15 @@ import (
 	"backend/db"
 	"context"
 	"fmt"
-	"github.com/dgraph-io/ristretto"
 	"github.com/flier/gohs/hyperscan"
 	"github.com/google/uuid"
 	jsoniter "github.com/json-iterator/go"
 	"github.com/julienschmidt/httprouter"
+	"github.com/redis/go-redis/v9"
 	"io"
 	"log"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
 )
@@ -21,37 +22,24 @@ var (
 	regexpr, _    = hyperscan.
 			NewBlockDatabase(hyperscan.NewPattern("^\\d{4}\\-(0[1-9]|1[012])\\-(0[1-9]|[12][0-9]|3[01])$", hyperscan.SingleMatch))
 
-	ctx      = context.Background()
-	json     = jsoniter.ConfigCompatibleWithStandardLibrary
-	cache    *ristretto.Cache
-	getCache = GetCache
+	ctx             = context.Background()
+	json            = jsoniter.ConfigCompatibleWithStandardLibrary
+	redisConnection = redis.NewClient(&redis.Options{Addr: getRedisString()})
 )
+
+func getRedisString() string {
+	redisString := os.Getenv("REDIS_URL")
+
+	if redisString == "" {
+		return "localhost:6379"
+	}
+	return redisString
+}
 
 type Job struct {
 	name       string
 	Pessoa     *db.Pessoa
 	PessoaJson []byte
-}
-
-func GetCache() *ristretto.Cache {
-
-	if cache != nil {
-		return cache
-	}
-
-	var err error
-
-	cache, err = ristretto.NewCache(&ristretto.Config{
-		NumCounters: 1e7,     // number of keys to track frequency of (10M).
-		MaxCost:     1 << 30, // maximum cost of cache (1GB).
-		BufferItems: 64,      // number of keys per Get buffer.
-	})
-
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	return cache
 }
 
 func GetPessoa(w http.ResponseWriter, r *http.Request, ps httprouter.Params) {
@@ -66,9 +54,9 @@ func GetPessoa(w http.ResponseWriter, r *http.Request, ps httprouter.Params) {
 
 	log.Println(fmt.Sprintf("get Pessoa by id %s", id))
 
-	result, found := getCache().Get("id::" + id.String())
+	result, err := redisConnection.Get(ctx, "id::"+id.String()).Result()
 
-	if found {
+	if err == nil {
 		log.Printf("found in cache %+v\n", result)
 		_, err := w.Write([]byte(fmt.Sprintf("%s", result)))
 		if err != nil {
@@ -164,8 +152,8 @@ func handleCreatePessoa(jobs chan Job, bytes []byte, w http.ResponseWriter, r *h
 func persistPessoa(jobs chan Job, pessoa *db.Pessoa) {
 	pessoaJson, _ := json.Marshal(pessoa)
 
-	getCache().Set("id::"+pessoa.Id.String(), pessoaJson, 1)
-	getCache().Set("apelido::"+pessoa.Apelido, true, 1)
+	redisConnection.Set(ctx, "id::"+pessoa.Id.String(), pessoaJson, 0)
+	redisConnection.Set(ctx, "apelido::"+pessoa.Apelido, true, 0)
 
 	job := Job{pessoa.Id.String(), pessoa, pessoaJson}
 	go func() {
@@ -209,13 +197,9 @@ func parsePessoaNascimento(nascimento string, result chan bool) {
 }
 
 func checkPessoaExistsCache(apelido string, result chan bool) {
-	_, found := getCache().Get("apelido::" + apelido)
-	result <- found
-}
+	_, err := redisConnection.Get(ctx, "apelido::"+apelido).Result()
 
-func checkPessoaExistsDb(apelido string, result chan bool) {
-	exists, _ := db.CheckPessoaExistsByApelido(GetConnection(), apelido)
-	result <- exists
+	result <- err == nil
 }
 
 func parsePessoa(bytes []byte, result chan ParsePessoaResult) {
@@ -234,12 +218,11 @@ func parsePessoa(bytes []byte, result chan ParsePessoaResult) {
 
 	checkApelidoExistsChannel := make(chan bool)
 	go checkPessoaExistsCache(pessoa.Apelido, checkApelidoExistsChannel)
+
 	existsCache := <-checkApelidoExistsChannel
 	if existsCache {
 		result <- resultParsePessoaError("apelido must be unique")
 	}
-
-	go checkPessoaExistsDb(pessoa.Apelido, checkApelidoExistsChannel)
 
 	if pessoa.Nome == "" || pessoa.Apelido == "" || (pessoa.Stack != nil && len(pessoa.Stack) == 0) {
 		result <- resultParsePessoaError("field cannot be null")
@@ -248,11 +231,6 @@ func parsePessoa(bytes []byte, result chan ParsePessoaResult) {
 	nascimentoValido := <-parseNascimentoChannel
 	if !nascimentoValido {
 		result <- resultParsePessoaError("field nascimento invalid")
-	}
-
-	existsDb := <-checkApelidoExistsChannel
-	if existsDb {
-		result <- resultParsePessoaError("apelido must be unique")
 	}
 
 	log.Printf(fmt.Sprintf("parsed Pessoa %+v", pessoa))

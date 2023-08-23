@@ -1,0 +1,22 @@
+name: main
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  builddb:
+    runs-on: ubuntu-20.04
+    steps:
+      - uses: actions/checkout@master
+      - name: Build
+        run: docker build ./config/db -t rinha-backend-postgres:latest
+  build:
+    runs-on: ubuntu-20.04
+    steps:
+      - uses: actions/checkout@master
+      - name: Build
+        run: docker build . -t rinha-backend:latest        
+    

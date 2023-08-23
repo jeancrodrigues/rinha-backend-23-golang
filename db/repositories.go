@@ -145,6 +145,32 @@ func SavePessoaSearchBatch(conn PgxIface, pessoaBatch []Pessoa, pessoaJson [][]b
 	return nil
 }
 
+func SavePessoaBatch(conn PgxIface, pessoaBatch []Pessoa) error {
+
+	sql := "insert into pessoa values %s"
+
+	params := []interface{}{}
+	paramSql := []string{}
+
+	for index, pessoa := range pessoaBatch {
+		i := index * 5
+		params = append(params, pessoa.Id, pessoa.Apelido, pessoa.Nome, pessoa.Nascimento, pessoa.Stack)
+		paramSql = append(paramSql, fmt.Sprintf("($%d, $%d, $%d, $%d, $%d::varchar[])", i+1, i+2, i+3, i+4, i+5))
+	}
+
+	exec, err := conn.
+		Exec(context.Background(), fmt.Sprintf(sql, strings.Join(paramSql, ",")), params...)
+
+	log.Println(fmt.Sprintf("executed insert with result %+v", exec))
+
+	if err != nil {
+		log.Println(fmt.Sprintf("error executing insert %v", err))
+		return err
+	}
+
+	return nil
+}
+
 func SavePessoa(conn PgxIface, id uuid.UUID, pessoa Pessoa) error {
 
 	sql := `insert into pessoa values ( $1, $2, $3, $4, $5::varchar[]);`

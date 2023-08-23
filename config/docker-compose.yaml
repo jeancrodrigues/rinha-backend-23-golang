@@ -1,7 +1,7 @@
 version: '3.5'
 services:
   api1: &api
-    image: 22784df57237
+    image: ghcr.io/jeancrodrigues/rinha-backend:latest
 #    hostname: api1
     depends_on:
       - db
@@ -11,13 +11,13 @@ services:
     deploy:
       resources:
         limits:
-          cpus: '0.1'
-          memory: '0.3GB'
+          cpus: '0.125'
+          memory: '0.35GB'
     environment:
       DATABASE_URL: postgres://pessoa:pessoa@db:5432/pessoa
       MAX_CONNECTIONS: 75
       REDIS_URL: cache:6379
-    command: app -max_queue_size=5000 -batch_size=1000 -batch_sleep=5000
+    command: app -max_queue_size=10000 -batch_size=1000 -batch_sleep=2000
 
   api2: *api
 #    # API - Instância 01
@@ -47,7 +47,7 @@ services:
     deploy:
       resources:
         limits:
-          cpus: '0.1'
+          cpus: '0.15'
           memory: '0.5GB'
   cache:
     image: redis:7.2-alpine
@@ -56,18 +56,18 @@ services:
       resources:
         limits:
           cpus: "0.1"
-          memory: "0.2GB"
+          memory: "0.3GB"
     command: redis-server --save "" --loglevel warning
 
   db: # Banco de dados
-    image: postgres
-    volumes:
+    image: ghcr.io/jeancrodrigues/rinha-backend-postgres:latest
+#    volumes:
 #      - ./postgres.conf:/etc/postgresql/postgresql.conf
-      - ./db-init-entrypoint.sh:/docker-entrypoint-initdb.d/init-user-db.sh
+#      - ./db-init-entrypoint.sh:/docker-entrypoint-initdb.d/init-user-db.sh
     deploy:
       resources:
         limits:
-          cpus: '1.1'
+          cpus: '1.0'
           memory: '1.5GB'
     ports:
       - "5433:5432"

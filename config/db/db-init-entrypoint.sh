@@ -25,8 +25,9 @@ psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" <<-E
 
   create unique index pessoa_apelido_index on public.pessoa (apelido);
 
-  create index pessoa_stacks_gin_index ON public.pessoa_search USING gin (search gin_trgm_ops);
+  create index pessoa_stacks_gin_index ON public.pessoa_search USING gist (search gist_trgm_ops(siglen=256));
+
 
 EOSQL
-
+# create index pessoa_stacks_gin_index ON public.pessoa_search USING gin (search gin_trgm_ops);
 # create index pessoa_stacks_gin_index ON public.pessoa USING gist (stack_s gist_trgm_ops(siglen=256));

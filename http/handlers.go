@@ -110,7 +110,8 @@ func GetPessoas(w http.ResponseWriter, r *http.Request, ps httprouter.Params) {
 	}
 }
 
-func CreatePessoa(jobs chan Job, w http.ResponseWriter, r *http.Request, ps httprouter.Params) {
+func CreatePessoa(batchChannelPessoa chan Job, batchChannelPessoaSearch chan Job,
+	w http.ResponseWriter, r *http.Request) {
 	bytes, err := io.ReadAll(r.Body)
 	if err != nil {
 		w.WriteHeader(http.StatusBadRequest)
@@ -118,14 +119,15 @@ func CreatePessoa(jobs chan Job, w http.ResponseWriter, r *http.Request, ps http
 		return
 	}
 
-	handleCreatePessoa(jobs, bytes, w, r)
+	handleCreatePessoa(batchChannelPessoa, batchChannelPessoaSearch, bytes, w)
 }
 
 func getNewUuid(resultChan chan uuid.UUID) {
 	resultChan <- uuid.New()
 }
 
-func handleCreatePessoa(jobs chan Job, bytes []byte, w http.ResponseWriter, r *http.Request) {
+func handleCreatePessoa(batchChannelPessoa chan Job,
+	batchChannelPessoaSearch chan Job, bytes []byte, w http.ResponseWriter) {
 
 	uuidChannel := make(chan uuid.UUID)
 	go getNewUuid(uuidChannel)
@@ -146,32 +148,26 @@ func handleCreatePessoa(jobs chan Job, bytes []byte, w http.ResponseWriter, r *h
 	w.Header().Set("Location", fmt.Sprintf("/pessoas/%s", pessoa.Id))
 	w.WriteHeader(http.StatusCreated)
 
-	go persistPessoa(jobs, pessoa)
+	go persistPessoa(batchChannelPessoa, batchChannelPessoaSearch, pessoa)
 }
 
-func persistPessoa(jobs chan Job, pessoa *db.Pessoa) {
+func persistPessoa(batchChannelPessoa chan Job,
+	batchChannelPessoaSearch chan Job, pessoa *db.Pessoa) {
 	pessoaJson, _ := json.Marshal(pessoa)
 
 	redisConnection.Set(ctx, "id::"+pessoa.Id.String(), pessoaJson, 0)
 	redisConnection.Set(ctx, "apelido::"+pessoa.Apelido, true, 0)
 
-	job := Job{pessoa.Id.String(), pessoa, pessoaJson}
 	go func() {
-		fmt.Printf("added: %s %s\n", job.name)
-		jobs <- job
+		fmt.Printf("added: %s %s\n", pessoa.Id)
+		batchChannelPessoa <- Job{name: pessoa.Id.String(), Pessoa: pessoa}
+		batchChannelPessoaSearch <- Job{pessoa.Id.String(), pessoa, pessoaJson}
 	}()
-
-	err := db.SavePessoa(GetConnection(), pessoa.Id, *pessoa)
-	if err != nil {
-		log.Println(err)
-		return
-	}
 
 	log.Println(fmt.Sprintf("created Pessoa with id %s : body %+v", pessoa.Id, pessoa))
 }
 
 func GetPessoaCount(w http.ResponseWriter, r *http.Request, ps httprouter.Params) {
-
 	count, err := db.CountPessoa(GetConnection())
 
 	if err != nil {
@@ -252,15 +248,7 @@ func resultParsePessoaSuccess(pessoa *db.Pessoa) ParsePessoaResult {
 	}
 }
 
-func MaterializePessoaToSearchTable(id int, j Job) {
-	fmt.Printf("worker%d: started %s\n", id, j.name)
-
-	db.SavePessoaSearch(GetConnection(), *j.Pessoa, j.PessoaJson)
-
-	fmt.Printf("worker%d: completed %s!\n", id, j.name)
-}
-
-func MaterializePessoaToSearchTableBatch(batch []Job) {
+func SavePessoaSearchBatch(batch []Job) {
 	log.Println(fmt.Printf("batch started %s\n", batch[0].name))
 
 	var pessoaBatch []db.Pessoa
@@ -274,5 +262,18 @@ func MaterializePessoaToSearchTableBatch(batch []Job) {
 	db.SavePessoaSearchBatch(GetConnection(), pessoaBatch, pessoaJson)
 
 	log.Println(fmt.Printf("batch completed %s count %d!\n", batch[0].name, len(batch)))
+}
 
+func SavePessoaBatch(batch []Job) {
+	log.Println(fmt.Printf("batch started %s\n", batch[0].name))
+
+	var pessoaBatch []db.Pessoa
+
+	for _, job := range batch {
+		pessoaBatch = append(pessoaBatch, *job.Pessoa)
+	}
+
+	db.SavePessoaBatch(GetConnection(), pessoaBatch)
+
+	log.Println(fmt.Printf("batch completed %s count %d!\n", batch[0].name, len(batch)))
 }

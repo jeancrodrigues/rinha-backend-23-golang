@@ -1,7 +1,7 @@
 version: '3.5'
 services:
   api1: &api
-    image: ghcr.io/jeancrodrigues/rinha-backend:latest
+    image: ghcr.io/jeancrodrigues/rinha-backend-23-golang:main
 #    hostname: api1
     depends_on:
       - db
@@ -60,7 +60,7 @@ services:
     command: redis-server --save "" --loglevel warning
 
   db: # Banco de dados
-    image: ghcr.io/jeancrodrigues/rinha-backend-postgres:latest
+    image: ghcr.io/jeancrodrigues/rinha-backend-23-golang-db:main
 #    volumes:
 #      - ./postgres.conf:/etc/postgresql/postgresql.conf
 #      - ./db-init-entrypoint.sh:/docker-entrypoint-initdb.d/init-user-db.sh

@@ -25,7 +25,7 @@ var (
 func GetConnection() PgxIface {
 
 	if Conn != nil {
-		log.Println("getting existent connection")
+		//log.Println("getting existent connection")
 		return Conn
 	} else {
 		log.Println("opening connections")

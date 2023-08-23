@@ -67,7 +67,7 @@ func FindPessoas(conn PgxIface, search string) ([]string, error) {
 	result, err := conn.Query(context.Background(), sql, search)
 
 	if err != nil {
-		log.Println(err)
+		//log.Println(err)
 		return nil, err
 	}
 
@@ -105,13 +105,13 @@ func SavePessoaSearch(conn PgxIface, pessoa Pessoa, pessoaJson []byte) error {
 
 	search := strings.ToLower(strings.Join(pessoa.Stack, " ") + " " + pessoa.Nome + " " + pessoa.Apelido)
 
-	exec, err := conn.
+	_, err := conn.
 		Exec(context.Background(), sql, search, pessoaJson)
 
-	log.Println(fmt.Sprintf("executed insert with result %+v", exec))
+	//log.Println(fmt.Sprintf("executed insert with result %+v", exec))
 
 	if err != nil {
-		log.Println(fmt.Sprintf("error executing insert %v", err))
+		//log.Println(fmt.Sprintf("error executing insert %v", err))
 		return err
 	}
 
@@ -132,10 +132,10 @@ func SavePessoaSearchBatch(conn PgxIface, pessoaBatch []Pessoa, pessoaJson [][]b
 		paramSql = append(paramSql, fmt.Sprintf("($%d, $%d)", i+1, i+2))
 	}
 
-	exec, err := conn.
+	_, err := conn.
 		Exec(context.Background(), fmt.Sprintf(sql, strings.Join(paramSql, ",")), params...)
 
-	log.Println(fmt.Sprintf("executed insert with result %+v", exec))
+	//log.Println(fmt.Sprintf("executed insert with result %+v", exec))
 
 	if err != nil {
 		log.Println(fmt.Sprintf("error executing insert %v", err))
@@ -158,10 +158,10 @@ func SavePessoaBatch(conn PgxIface, pessoaBatch []Pessoa) error {
 		paramSql = append(paramSql, fmt.Sprintf("($%d, $%d, $%d, $%d, $%d::varchar[])", i+1, i+2, i+3, i+4, i+5))
 	}
 
-	exec, err := conn.
+	_, err := conn.
 		Exec(context.Background(), fmt.Sprintf(sql, strings.Join(paramSql, ",")), params...)
 
-	log.Println(fmt.Sprintf("executed insert with result %+v", exec))
+	//log.Println(fmt.Sprintf("executed insert with result %+v", exec))
 
 	if err != nil {
 		log.Println(fmt.Sprintf("error executing insert %v", err))
@@ -175,10 +175,10 @@ func SavePessoa(conn PgxIface, id uuid.UUID, pessoa Pessoa) error {
 
 	sql := `insert into pessoa values ( $1, $2, $3, $4, $5::varchar[]);`
 
-	exec, err := conn.
+	_, err := conn.
 		Exec(context.Background(), sql, id, pessoa.Apelido, pessoa.Nome, pessoa.Nascimento, pessoa.Stack)
 
-	log.Println(fmt.Sprintf("executed insert with result %+v", exec))
+	//log.Println(fmt.Sprintf("executed insert with result %+v", exec))
 
 	if err != nil {
 		log.Println(fmt.Sprintf("error executing insert %v", err))

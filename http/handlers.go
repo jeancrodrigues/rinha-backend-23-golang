@@ -48,24 +48,24 @@ func GetPessoa(w http.ResponseWriter, r *http.Request, ps httprouter.Params) {
 
 	if err != nil {
 		http.NotFound(w, r)
-		log.Println(fmt.Sprintf("get Pessoa with invalid uuid %s %s", param, err))
+		//log.Println(fmt.Sprintf("get Pessoa with invalid uuid %s %s", param, err))
 		return
 	}
 
-	log.Println(fmt.Sprintf("get Pessoa by id %s", id))
+	//log.Println(fmt.Sprintf("get Pessoa by id %s", id))
 
 	result, err := redisConnection.Get(ctx, "id::"+id.String()).Result()
 
 	if err == nil {
-		log.Printf("found in cache %+v\n", result)
+		//log.Printf("found in cache %+v\n", result)
 		_, err := w.Write([]byte(fmt.Sprintf("%s", result)))
 		if err != nil {
-			log.Println(err)
+			//log.Println(err)
 			return
 		}
 		return
 	} else {
-		log.Println(err)
+		//log.Println(err)
 	}
 
 	pessoa, err := db.GetPessoaById(GetConnection(), id)
@@ -79,7 +79,7 @@ func GetPessoa(w http.ResponseWriter, r *http.Request, ps httprouter.Params) {
 	_, err = w.Write(pessoaJson)
 
 	if err != nil {
-		log.Println(err)
+		//log.Println(err)
 		return
 	}
 }
@@ -99,12 +99,12 @@ func GetPessoas(w http.ResponseWriter, r *http.Request, ps httprouter.Params) {
 		return
 	}
 
-	log.Println(fmt.Sprintf("get pessoas by term %s", searchTerm))
+	//log.Println(fmt.Sprintf("get pessoas by term %s", searchTerm))
 
 	_, err = w.Write([]byte(fmt.Sprintf("[%s]", strings.Join(pessoas, ","))))
 
 	if err != nil {
-		log.Println(err)
+		//log.Println(err)
 		w.WriteHeader(http.StatusInternalServerError)
 		return
 	}
@@ -115,7 +115,7 @@ func CreatePessoa(batchChannelPessoa chan Job, batchChannelPessoaSearch chan Job
 	bytes, err := io.ReadAll(r.Body)
 	if err != nil {
 		w.WriteHeader(http.StatusBadRequest)
-		log.Printf("error reading body %s\n", err)
+		//log.Printf("error reading body %s\n", err)
 		return
 	}
 
@@ -138,7 +138,7 @@ func handleCreatePessoa(batchChannelPessoa chan Job,
 	parseResult := <-parsePessoaChannel
 	if parseResult.Error != nil {
 		w.WriteHeader(http.StatusBadRequest)
-		log.Printf("error parsing input %s\n", parseResult.Error)
+		//log.Printf("error parsing input %s\n", parseResult.Error)
 		return
 	}
 
@@ -159,12 +159,12 @@ func persistPessoa(batchChannelPessoa chan Job,
 	redisConnection.Set(ctx, "apelido::"+pessoa.Apelido, true, 0)
 
 	go func() {
-		fmt.Printf("added: %s %s\n", pessoa.Id)
+		//fmt.Printf("added: %s %s\n", pessoa.Id)
 		batchChannelPessoa <- Job{name: pessoa.Id.String(), Pessoa: pessoa}
 		batchChannelPessoaSearch <- Job{pessoa.Id.String(), pessoa, pessoaJson}
 	}()
 
-	log.Println(fmt.Sprintf("created Pessoa with id %s : body %+v", pessoa.Id, pessoa))
+	//log.Println(fmt.Sprintf("created Pessoa with id %s : body %+v", pessoa.Id, pessoa))
 }
 
 func GetPessoaCount(w http.ResponseWriter, r *http.Request, ps httprouter.Params) {
@@ -178,7 +178,7 @@ func GetPessoaCount(w http.ResponseWriter, r *http.Request, ps httprouter.Params
 	_, err = w.Write([]byte(strconv.Itoa(int(count))))
 
 	if err != nil {
-		log.Println(err)
+		//log.Println(err)
 		return
 	}
 }
@@ -229,7 +229,7 @@ func parsePessoa(bytes []byte, result chan ParsePessoaResult) {
 		result <- resultParsePessoaError("field nascimento invalid")
 	}
 
-	log.Printf(fmt.Sprintf("parsed Pessoa %+v", pessoa))
+	//log.Printf(fmt.Sprintf("parsed Pessoa %+v", pessoa))
 
 	result <- resultParsePessoaSuccess(&pessoa)
 }
@@ -249,7 +249,7 @@ func resultParsePessoaSuccess(pessoa *db.Pessoa) ParsePessoaResult {
 }
 
 func SavePessoaSearchBatch(batch []Job) {
-	log.Println(fmt.Printf("batch started %s\n", batch[0].name))
+	//log.Println(fmt.Printf("batch started %s\n", batch[0].name))
 
 	var pessoaBatch []db.Pessoa
 	var pessoaJson [][]byte
@@ -265,7 +265,7 @@ func SavePessoaSearchBatch(batch []Job) {
 }
 
 func SavePessoaBatch(batch []Job) {
-	log.Println(fmt.Printf("batch started %s\n", batch[0].name))
+	//log.Println(fmt.Printf("batch started %s\n", batch[0].name))
 
 	var pessoaBatch []db.Pessoa
 
@@ -275,5 +275,5 @@ func SavePessoaBatch(batch []Job) {
 
 	db.SavePessoaBatch(GetConnection(), pessoaBatch)
 
-	log.Println(fmt.Printf("batch completed %s count %d!\n", batch[0].name, len(batch)))
+	//log.Println(fmt.Printf("batch completed %s count %d!\n", batch[0].name, len(batch)))
 }
